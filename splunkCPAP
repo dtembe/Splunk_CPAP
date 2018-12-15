@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+
+
+# Splunk CPAP Index Token - aaaaaaaaaaaaaaaa-aaaaaaaaaaaaa-aaaaaaaa-aaaaaaaaaaaa-aaaaaaaaaaaa
+# works -  curl -k -H "Authorization: Splunk aaaaaaaaaaaaaaaaaaaaaaaa" https://192.168.x.x:8088/services/collector/event -d '{"sourcetype": "CPAP", "event": "http auth ftw!"}'
+
+"""
+Fields that Splunk accepts
+ {
+     "time":  1433188255.500,
+     "host": "localhost",
+     "source": "datasource",
+     "sourcetype": "txt",
+     "index": "main",
+     "event": { "hello": "world" }
+ }
+"""
+
+from __future__ import division, print_function, absolute_import
+
+import os
+import numpy as np
+import glob
+import datetime
+import time
+from calendar import timegm
+import pandas as pd
+import csv
+import subprocess
+import json
+import sys
+import requests
+
+
+import pyedflib
+
+if __name__ == '__main__':
+
+    for f in glob.glob("C:/Users/dtemb/PycharmProjects/CPAP/DATA/EDF/ResMed_23181869382/Backup/DATALOG/2018/cpapData.csv"):
+        try:
+            os.remove(f)
+        except:
+            pass
+
+    #cpapData = pd.DataFrame(columns=['Date', 'Time', 'getPhysicalDimension', 'Pressume cmH2O', 'getPhysicalMinimum_getPhysicalMaximum', 'getDigitalMinimum_getDigitalMaximum', 'getFileDuration', 'getSampleFrequency'])
+    # cpapData = pd.DataFrame()
+    # print(cpapData.head(10))
+
+    cpapFile = open('C:/Users/dtemb/PycharmProjects/CPAP/DATA/EDF/ResMed_23181869382/Backup/DATALOG/2018/cpapData.csv', 'w', newline='')
+    writer = csv.writer(cpapFile)
+
+    path = r'C:/Users/dtemb/PycharmProjects/CPAP/DATA/EDF/ResMed_23181869382/Backup/DATALOG/2018/*BRP.edf'
+    list_of_files = glob.glob(path)
+    files = sorted(list_of_files, key=os.path.getmtime)
+
+##############################Need to update anytime there is an IP change #################
+    
+    url = 'https://192.168.xxx.xxx:8088/services/collector/event'
+    authHeader = {'Authorization': 'Splunk aaaaaaaaaaaaaaaa-aaaaaaaaaaaaa-aaaaaaaa-aaaaaaaaaaaa-aaaaaaaaaaaa'}
+    testHeaders = {'Authorization': 'Splunk aaaaaaaaaaaaaaaa-aaaaaaaaaaaaa-aaaaaaaa-aaaaaaaaaaaa-aaaaaaaaaaaa', 'Content-Type': 'application/json'}
+    headers = {
+        'Accept': "application/json",
+        'Authorization': 'Splunk aaaaaaaaaaaaaaaa-aaaaaaaaaaaaa-aaaaaaaa-aaaaaaaaaaaa-aaaaaaaaaaaa',
+        'cache-control': "no-cache",
+    }
+
+    for file in files:
+        #f = pyedflib.EdfReader(r"C:\\Users\\dtemb\\PycharmProjects\\CPAP\\DATA\\EDF\\ResMed_23181869382\\Backup\\DATALOG\\2018\\20181122_025348_BRP.edf")
+        f = pyedflib.EdfReader(file)
+        n = f.signals_in_file -1
+        for i in np.arange(n):
+            y = 0
+            sample_dur = f.file_duration / f.datarecords_in_file
+            time_inc = sample_dur / f.getSampleFrequency(i)
+            epoch = int(time.mktime(time.strptime(str(f.getStartdatetime()), '%Y-%m-%d %H:%M:%S'))) #generate starting EPOCH time.
+            for x in f.readSignal(i):
+                y += time_inc
+                result = ""
+                result += datetime.datetime.fromtimestamp(float(epoch) + y / 60.0).strftime("%m-%d-%Y-%H-%M-%S.%f")
+                result += " , [" + str(i) + ":" + f.getLabel(i).replace(".", "_") + "] , " +str(x) + " " + str(f.getPhysicalDimension(i))
+                result += " , " + str(f.getPhysicalMinimum(i)) + ":" + str(f.getPhysicalMaximum(i))
+                result += " , " + str(f.getDigitalMinimum(i)) + ":" + str(f.getDigitalMaximum(i))
+                result += " , " + str(f.getFileDuration())
+                result += " , " + str(f.getSampleFrequency(i))
+                #creating a key value pair for JSON Package
+
+                c_timeOfEvent = datetime.datetime.fromtimestamp(float(epoch) + y / 60.0).strftime("%m-%d-%Y-%H-%M-%S.%f")
+                dt_obj = datetime.datetime.strptime(c_timeOfEvent, "%m-%d-%Y-%H-%M-%S.%f")
+                tsInEpoch = dt_obj.timestamp()
+                c_timeEpoch = str(tsInEpoch)
+                c_signal = str(i)
+                c_time_inc = str(time_inc)
+                c_label = str(i) + ":" + f.getLabel(i).replace(".", "_")
+                c_phyDim = str(x) + " " + str(f.getPhysicalDimension(i))
+                c_phyMin = str(f.getDigitalMinimum(i))
+                c_phyMax = str(f.getPhysicalMaximum(i))
+                c_digMin = str(f.getDigitalMinimum(i))
+                c_digMax = str(f.getDigitalMaximum(i))
+                c_fileDur = str(f.getFileDuration())
+                c_samFreq = str(f.getSampleFrequency(i))
+                c_result = str(result)
+
+                #Not Needed but testing if values exist
+                #result += "  PatientName:  " + str(f.getPatientName())
+                #bottom 2 rows to push data to Splunk
+                #result += "\n" #this should go to the end of last row.
+                #sendOut.write(result)
+
+                #print to console
+                print(result)
+                #write to CSV
+                #writer.writerow([result])
+
+                #create a JSON Package
+                data = {
+                    "time": c_timeEpoch,
+                    "host": "Dan-ResmedS10",
+                    "source": "CPAP",
+                    "sourcetype": "http:cpap",
+                    "index": "cpap",
+                    "event": {
+                        "timeOfEvent": c_timeOfEvent,
+                        "timeEpoch": c_timeEpoch,
+                        "signal": c_signal,
+                        "timeInc": c_time_inc,
+                        "label": c_label,
+                        "physicalDimension": c_phyDim,
+                        "physicalMinimum": c_phyMin,
+                        "physicalMaximum": c_phyMax,
+                        "digitalMinimum": c_digMin,
+                        "digitalMaximum": c_digMax,
+                        "fileDuration": c_fileDur,
+                        "sampleFrequency": c_samFreq,
+                        "result": c_result
+                        }
+                }
+                json.dumps(data)
+                print(json.dumps(data))
+                splunk_post = (json.dumps(data))
+                try:
+                    r = requests.post(url, headers=headers, data=splunk_post, verify=False)
+                    print(r.text)
+                except IOError as e:
+                    print(e)
+
+            print("No Rows Left to insert into CSV")
+        print("Numpy Array Ended")
+    print("No More Files Left")
